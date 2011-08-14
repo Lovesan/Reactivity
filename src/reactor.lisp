@@ -66,7 +66,7 @@ obtained by CURRENT-REACTOR function."
   (%reactor-thread reactor))
 
 (defun reactor-running-p (reactor)
-  "Returns T if the reactor is already running, or NIL otherwise."
+  "Returns T if the reactor is already running and NIL otherwise."
   (declare (type reactor reactor))
   (%reactor-running reactor))
 

@@ -142,7 +142,7 @@ In case when operation has been cancelled, returns zero values."
                             (cancellation #'no-values))
 "  Appends new operation(an application of FUNCTION to ARGS) into reactor's
 priority queue.
-  Unless :WAIT is T, operation is asynchronous, which means that this function
+  Unless :WAIT is NIL, operation is synchronous, otherwise this function
 will return not the values returned by FUNCTION, but instead an object of type
 REACTOR-OPERATION.
 :COMPLETION callback will be called upon operation's completion.
@@ -170,7 +170,7 @@ REACTOR-OPERATION.
                                       (completion #'no-values)
                                       (cancellation #'no-values))
 "Temporary stops execution of reactor's message loop.
-Unless :WAIT is T, operation is asynchronous.
+Unless :WAIT is NIL, operation is synchronous.
 :COMPLETION callback will be called upon operation's completion.
 :CANCELLATION routine will be called upon operation's cancellation."
   (declare (type reactor reactor)
