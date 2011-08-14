@@ -1,0 +1,5 @@
+    This library should become a reactive GUI framework
+for Windows(and maybe not only for Windows).
+
+    Hardware-accelerated rendering is also expected,
+unless i become too lazy to implement such a thing.
