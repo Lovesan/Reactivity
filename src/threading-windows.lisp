@@ -24,16 +24,20 @@
 
 (in-package #:reactivity)
 
-(deftype tid () 'doors:dword)
+(deftype thread () 'doors:dword)
 
-(defun current-tid ()
+(defun thread= (thread1 thread2)
+  (declare (type thread thread1 thread2))
+  (= thread1 thread2))
+
+(defun current-thread ()
   "Returns current native Windows thread identifier."
   (virgil:external-function-call
     "GetCurrentThreadId"
     ((:stdcall doors:kernel32)
      (doors:dword))))
 
-(defun notify-thread (tid)
+(defun thread-notify (thread)
 "Notifies native Windows thread with message loop about
 the new pending operation."
   (virgil:external-function-call
@@ -45,7 +49,35 @@ the new pending operation."
      (virgil:uint)
      (doors:wparam)
      (doors:lparam))
-    tid
+    thread
     (1+ #x8000) ;; WM_APP+1
     0
     0))
+
+(defun thread-wait-notification ()
+  "Dispatches Windows messages on the current thread until WP_APP+1 is spotted."
+  (let ((msg (doors.ui:make-msg)))
+    (declare (dynamic-extent msg))
+    (loop (doors.ui:get-message msg)
+      (doors.ui:translate-message msg)
+      (doors.ui:dispatch-message msg)
+      (when (= (1+ #x8000) (doors.ui:msg-message msg))
+        (return (values))))))
+
+(defmacro with-thread-loop (&body body)
+"During message loop execution COM is initialized to STA,
+for reasons of interoperability with OLE(e.g. drag'n'drop and so on)."
+  `(progn
+     (handler-bind ((warning #'muffle-warning))
+       (virgil:external-function-call
+         "CoInitialize"
+         ((:stdcall doors:ole32)
+          (doors:hresult)
+          (doors:handle))
+         nil))
+     (unwind-protect
+         (progn ,@body)
+       (virgil:external-function-call
+         "CoUninitialize"
+         ((:stdcall doors:ole32)
+          (virgil:void))))))

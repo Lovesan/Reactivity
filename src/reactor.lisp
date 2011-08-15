@@ -24,7 +24,7 @@
 
 (in-package #:reactivity)
 
-;; Priority levels, highest->lowest: normal, bindings, render, input, idle
+;; Priority levels, highest->lowest: normal, reactions, render, input, idle
 ;;
 ;; should i add some more in the future?
 
@@ -37,11 +37,8 @@
 "Reactor represents an event dispatcher associated with
 certain thread. An instance of this structure class could be
 obtained by CURRENT-REACTOR function."
-  (thread (bt:current-thread)
-          :type bt:thread)
+  (thread (current-thread) :type thread)
   (lock (bt:make-lock))
-  (cvar (bt:make-condition-variable))
-  (tid (current-tid) :type tid)
   (queue (map-into (make-array 5) (lambda () (cons nil nil)))
          :type (simple-array T (5)))
   (running nil))
@@ -58,12 +55,8 @@ obtained by CURRENT-REACTOR function."
               (%reactor-running object))
       (pprint-newline :mandatory stream)
       (format stream "Thread: ~s" (%reactor-thread object))
-      (pprint-newline :mandatory stream))))
-
-(defun reactor-thread (reactor)
-  "Returns a BT:THREAD object associated with the reactor."
-  (declare (type reactor reactor))  
-  (%reactor-thread reactor))
+      (pprint-newline :mandatory stream)))
+  object)
 
 (defun reactor-running-p (reactor)
   "Returns T if the reactor is already running and NIL otherwise."
@@ -79,19 +72,20 @@ obtained by CURRENT-REACTOR function."
 
 (deftype reactor-priority ()
 "Each reactor operation has a priority.
-One of(from highest to lowest): :NORMAL, :BINDINGS, :RENDER, :INPUT or :IDLE."
-  '(member :normal :bindings :render :input :idle))
+One of(from highest to lowest): :NORMAL, :REACTIONS, :RENDER, :INPUT or :IDLE."
+  '(member :normal :reactions :render :input :idle))
 
 (defun %reactor-priority (priority)
   (ecase priority
     (:normal 0)
-    (:bindings 1)
+    (:reactions 1)
     (:render 2)
     (:input 3)
     (:idle 4)))
 
 (defun ensure-default-thread-bindings ()
 "Each BT:THREAD must start with *CURRENT-REACTOR* variable initialized to NIL."
+  (bt:start-multiprocessing)
   (setf bt:*default-special-bindings*
         (cons '(*current-reactor* . nil)
               (remove '*current-reactor*
@@ -102,12 +96,11 @@ One of(from highest to lowest): :NORMAL, :BINDINGS, :RENDER, :INPUT or :IDLE."
 "Returns a reactor object for current thread.
 Unless thread's reactor already exists, it is created."
   (if *current-reactor*
-    (let ((tid (current-tid)))
-      (unless (= tid (%reactor-tid *current-reactor*))
-        (setf (%reactor-tid *current-reactor*) tid
-              (%reactor-thread *current-reactor*) (bt:current-thread)
-              (%reactor-lock *current-reactor*) (bt:make-lock)
-              (%reactor-cvar *current-reactor*) (bt:make-condition-variable)))
+    (let ((thread (current-thread)))
+      (unless (thread= thread (%reactor-thread *current-reactor*))
+        ;; reactor is out of date (e.g. lisp image has been restarted)
+        (setf (%reactor-thread *current-reactor*) (current-thread)
+              (%reactor-lock *current-reactor*) (bt:make-lock)))
       *current-reactor*)
     (setf *current-reactor* (%make-reactor))))
 
@@ -130,10 +123,29 @@ pieces of code that must be executed by the reactor."
   (values '() :type list)
   (function #'no-values :type function)
   (args '() :type list)
+  (observers '() :type list)
   (completion #'no-values :type function)
   (cancellation #'no-values :type function)
   (priority :normal :type reactor-priority)
   (status :pending :type operation-status))
+
+(defmethod print-object ((object reactor-operation) stream)
+  (declare (type stream stream))
+  (print-unreadable-object (object stream :type t :identity t)
+    (pprint-logical-block (stream nil)
+      (format stream "Reactor: ~s" (%operation-reactor object))
+      (pprint-newline :mandatory stream)
+      (format stream "Priority: ~:(~a~)" (%operation-priority object))
+      (pprint-newline :mandatory stream)
+      (format stream "Status: ~:(~a~)" (%operation-status object))
+      (pprint-newline :mandatory stream)
+      (when (%operation-observers object)
+        (format stream "Observers: ~{~s~^, ~}" (%operation-observers object))
+        (pprint-newline :mandatory stream))
+      (when (eq :completed (%operation-status object))
+        (format stream "Values: ~{~s~^, ~}" (%operation-values object))
+        (pprint-newline :mandatory stream))))
+  object)
 
 (defun reactor-operation-p (object)
 "Returns T if an object is an instance of REACTOR-OPERATION and NIL otherwise."

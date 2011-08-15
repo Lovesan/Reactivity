@@ -26,13 +26,17 @@
 
 (defpackage #:reactivity
   (:use #:cl)
+  #.`(:shadowing-import-from
+       #:closer-mop ,@(loop :for sym :being :the :external-symbol
+                        :in :closer-mop :collect (symbol-name sym)))
   (:export
+    
+    #:ensure-default-thread-bindings
     
     ;;reactor stuff
     #:reactor
     #:reactor-p
     #:current-reactor
-    #:reactor-thread
     #:reactor-running-p
     #:reactor-priority
     #:reactor-run
@@ -52,4 +56,29 @@
     #:operation-status
     #:operation-cancel
     #:operation-wait
+    
+    ;;conditions
+    #:reactivity-error
+    #:reactor-error
+    #:reactor-error-reactor
+    #:reaction-error
+    #:reaction-error-reaction
+    #:reaction-incompatible-reactor
+    
+    ;;reaction stuff
+    #:reaction
+    #:make-reaction
+    #:reaction-p
+    #:reaction-reactor
+    
+    ;;reactive class stuff
+    #:reactive-class
+    #:reactive-slot-definition
+    #:reactive-slot-definition-reaction
+    #:reactive-direct-slot-definition
+    #:reactive-effective-slot-definition
+    
+    ;;reactive object stuff
+    #:reactive-object
+    #:reactive-object-reactor
     ))

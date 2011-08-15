@@ -52,27 +52,28 @@
                   (pushnew :windows *features*))))
 
 (defsystem #:reactivity
-  :version "0.0.1"
+  :version "0.0.2"
   :description "Reactivity - a reactive GUI framework for Common Lisp."
   :author "Dmitry Ignatiev <lovesan.ru at gmail.com>"
   :maintainer "Dmitry Ignatiev <lovesan.ru at gmail.com>"
   :licence "MIT"
   :depends-on (#:bordeaux-threads
+               #:closer-mop
                #:virgil
                #+windows #:doors)
   :serial t
   :components ((:module "src"
                         :serial t
                         :components ((:file "packages")
+                                     (:file "conditions")
                                      #+windows
                                      (:file "threading-windows")
                                      #-windows
                                      (:file "threading-pthreads")
                                      (:file "reactor")
                                      (:file "reactor-methods")
-                                     #+windows
-                                     (:file "reactor-loop-windows")
-                                     #-windows
-                                     (:file "reactor-loop-pthreads")))))
+                                     (:file "reactions")
+                                     (:file "reactive-class")
+                                     (:file "reactive-object")))))
 
 ;;;; vim: ft=lisp et

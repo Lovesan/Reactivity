@@ -68,6 +68,8 @@ callback is called."
       (unless (null (operation-remove operation))
         (setf (%operation-status operation) :cancelled)
         (funcall (%operation-cancellation operation))
+        (dolist (thread (%operation-observers operation))
+          (thread-notify thread))
         operation))))
 
 (defun (setf operation-priority) (new-priority operation)
@@ -103,6 +105,19 @@ callback is called."
   (with-reactor-lock (reactor)
     (operation-add operation)))
 
+(defun operation-execute (operation)
+  (declare (type reactor-operation operation))
+  (setf (%operation-status operation) :executing
+        (%operation-values operation) (multiple-value-list
+                                        (apply (%operation-function operation)
+                                               (%operation-args operation)))
+        (%operation-status operation) :completed)
+  (funcall (%operation-completion operation))
+  (with-reactor-lock ((%operation-reactor operation))
+    (dolist (thread (%operation-observers operation))
+      (thread-notify thread)))
+  (values))
+
 (defun operation-wait (operation)
 "Waits for an operation to complete and returns values, returned
 by the application of operation's function to its arguments.
@@ -111,29 +126,17 @@ In case when operation has been cancelled, returns zero values."
   (case (%operation-status operation)
     (:completed (values-list (%operation-values operation)))
     (:cancelled (values))
-    (T (let ((reactor (%operation-reactor operation)))
-         (if (eq reactor (current-reactor))
-           (loop :for op = (reactor-dequeue reactor)
-             :while op :do
-             (setf (%operation-status op) :executing
-                   (%operation-values op) (multiple-value-list
-                                            (apply (%operation-function op)
-                                                   (%operation-args op)))
-                   (%operation-status op) :completed)
-             (funcall (%operation-completion op))
-             (when (eq op operation)
-               (return (values-list (%operation-values operation)))))
-           (let ((lock (%reactor-lock reactor))
-                 (cvar (%reactor-cvar reactor)))
-             (bt:acquire-lock lock)
-             (loop (bt:condition-wait cvar lock)
-               (case (%operation-status operation)
-                 (:completed
-                   (bt:release-lock lock)
-                   (return (values-list (%operation-values operation))))
-                 (:cancelled
-                   (bt:release-lock lock)
-                   (return (values)))))))))))
+    (T (progn (let ((reactor (%operation-reactor operation))
+                    (current-reactor (current-reactor)))
+                (with-reactor-lock (reactor)
+                  (push (current-thread) (%operation-observers operation)))
+                (with-thread-loop
+                    (loop (thread-wait-notification)
+                      (let ((operation (reactor-dequeue current-reactor)))
+                        (when operation (operation-execute operation)))
+                      (case (%operation-status operation)
+                        (:completed (return (values-list (%operation-values operation))))
+                        (:cancelled (return (values)))))))))))
 
 (defun reactor-invoke (reactor function args
                        &key (wait t)
@@ -148,7 +151,7 @@ REACTOR-OPERATION.
 :COMPLETION callback will be called upon operation's completion.
 :CANCELLATION routine will be called upon operation's cancellation.
 :PRIORITY parameter represents operation's priority level,
-:PRIORITY could be one of: :NORMAL, :BINDINGS, :RENDER, :INPUT or :IDLE."
+:PRIORITY could be one of: :NORMAL, :REACTIONS, :RENDER, :INPUT or :IDLE."
   (declare (type reactor reactor)
            (type reactor-priority priority)
            (type function function completion cancellation)
@@ -161,7 +164,7 @@ REACTOR-OPERATION.
                      :completion completion
                      :cancellation cancellation)))
     (reactor-enqueue reactor operation)
-    (notify-thread (%reactor-tid reactor))
+    (thread-notify (%reactor-thread reactor))
     (if wait
       (operation-wait operation)
       operation)))
@@ -184,3 +187,15 @@ Unless :WAIT is NIL, operation is synchronous.
                   :wait wait
                   :completion completion
                   :cancellation cancellation))
+
+(defun reactor-run ()
+"Starts message loop on the current thread, utilizing
+current thread's reactor."
+  (with-thread-loop
+      (let ((reactor (current-reactor)))
+        (declare (type reactor reactor))
+        (setf (%reactor-running reactor) t)
+        (loop :while (%reactor-running reactor) :do
+          (thread-wait-notification)
+          (let ((operation (reactor-dequeue reactor)))
+            (when operation (operation-execute operation)))))))
