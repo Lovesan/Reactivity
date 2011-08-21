@@ -101,7 +101,13 @@ Unless thread's reactor already exists, it is created."
       (unless (= thread-id (%reactor-thread-id *current-reactor*))
         ;; reactor is out of date (e.g. lisp image has been restarted)
         (setf (%reactor-thread-id *current-reactor*) thread-id
-              (%reactor-lock *current-reactor*) (bt:make-lock)))
+              (%reactor-lock *current-reactor*) (bt:make-lock))
+        (maphash (lambda (k v)
+                   (declare (ignore k))
+                   (setf (%timer-running v) nil
+                         (%timer-id v) 0))
+          (%reactor-timers *current-reactor*))
+        (clrhash (%reactor-timers *current-reactor*)))
       *current-reactor*)
     (setf *current-reactor* (%make-reactor))))
 
