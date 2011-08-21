@@ -24,22 +24,20 @@
 
 (in-package #:reactivity)
 
-(deftype thread () 'doors:dword)
+(deftype thread-id () 'doors:dword)
+(deftype timer-id () 'doors:ulong-ptr)
 
-(defun thread= (thread1 thread2)
-  (declare (type thread thread1 thread2))
-  (= thread1 thread2))
-
-(defun current-thread ()
+(defun current-thread-id ()
   "Returns current native Windows thread identifier."
   (virgil:external-function-call
     "GetCurrentThreadId"
     ((:stdcall doors:kernel32)
      (doors:dword))))
 
-(defun thread-notify (thread)
+(defun thread-notify (thread-id)
 "Notifies native Windows thread with message loop about
 the new pending operation."
+  (declare (type thread-id thread-id))
   (virgil:external-function-call
     #+doors.unicode "PostThreadMessageW"
     #-doors.unicode "PostThreadMessageA"
@@ -49,20 +47,69 @@ the new pending operation."
      (virgil:uint)
      (doors:wparam)
      (doors:lparam))
-    thread
-    (1+ #x8000) ;; WM_APP+1
+    thread-id
+    (1+ #x00008000) ;; WM_APP+1
     0
     0))
 
+(declaim (inline not-zero))
+(defun not-zero (x)
+  (/= x 0))
+
+(defun create-timer (interval)
+"Creates a timer associated with current native Windows thread.
+INTERVAL is measured in milliseconds."
+  (declare (type unsigned-byte interval))
+  (let ((interval (logand interval #xFFFFFFFF)))
+    (declare (type doors:dword interval))
+    (virgil:external-function-call "SetTimer"
+      ((:stdcall doors:user32)
+       ((doors:last-error doors:ulong-ptr not-zero))
+       (doors:handle hwnd :aux nil)
+       (doors:ulong-ptr id :aux 0)
+       (virgil:uint interval :aux interval)
+       (doors:ulong-ptr fn :aux 0)))))
+
+(defun timer-change-interval (timer-id interval)
+"Changes interval of a timer associated with current native Windows thread.
+INTERVAL is measured in milliseconds."
+  (declare (type timer-id timer-id)
+           (type unsigned-byte interval))
+  (let ((interval (logand interval #xFFFFFFFF)))
+    (declare (type doors:dword interval))
+    (virgil:external-function-call "SetTimer"
+      ((:stdcall doors:user32)
+       ((doors:last-error doors:ulong-ptr not-zero))
+       (doors:handle hwnd :aux nil)
+       (doors:ulong-ptr id :aux timer-id)
+       (virgil:uint interval :aux interval)
+       (doors:ulong-ptr fn :aux 0)))))
+
+(defun timer-destroy (timer-id)
+"Destroys a timer associated with current native Windows thread."
+  (declare (type timer-id timer-id))
+  (virgil:external-function-call "KillTimer"
+    ((:stdcall doors:user32)
+     ((doors:last-error virgil:boolean))
+     (doors:handle hwnd :aux nil)
+     (doors:ulong-ptr id :aux timer-id))))
+
 (defun thread-wait-notification ()
-  "Dispatches Windows messages on the current thread until WP_APP+1 is spotted."
+"Dispatches Windows messages on the current thread until WP_APP+1
+or WM_TIMER is spotted. In case of WM_APP+1, returns NIL, otherwise
+returns timer identifier"
   (let ((msg (doors.ui:make-msg)))
     (declare (dynamic-extent msg))
     (loop (doors.ui:get-message msg)
       (doors.ui:translate-message msg)
       (doors.ui:dispatch-message msg)
-      (when (= (1+ #x8000) (doors.ui:msg-message msg))
-        (return (values))))))
+      ;; WM_APP+1
+      (when (= (1+ #x00008000) (doors.ui:msg-message msg))
+        (return nil))
+      ;; WM_TIMER(wParam is timer identifier)
+      (when (and (= #x00000113 (doors.ui:msg-message msg))
+                 (zerop (doors.ui:msg-lparam msg)))
+        (return (doors.ui:msg-wparam msg))))))
 
 (defmacro with-thread-loop (&body body)
 "During message loop execution COM is initialized to STA,

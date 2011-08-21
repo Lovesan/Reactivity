@@ -52,7 +52,7 @@
                   (pushnew :windows *features*))))
 
 (defsystem #:reactivity
-  :version "0.0.2"
+  :version "0.0.3"
   :description "Reactivity - a reactive GUI framework for Common Lisp."
   :author "Dmitry Ignatiev <lovesan.ru at gmail.com>"
   :maintainer "Dmitry Ignatiev <lovesan.ru at gmail.com>"

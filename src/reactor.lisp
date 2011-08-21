@@ -37,10 +37,11 @@
 "Reactor represents an event dispatcher associated with
 certain thread. An instance of this structure class could be
 obtained by CURRENT-REACTOR function."
-  (thread (current-thread) :type thread)
+  (thread-id (current-thread-id) :type thread-id)
   (lock (bt:make-lock))
   (queue (map-into (make-array 5) (lambda () (cons nil nil)))
          :type (simple-array T (5)))
+  (timers (make-hash-table :test #'eql) :type hash-table)
   (running nil))
 
 (defun reactor-p (object)
@@ -54,7 +55,7 @@ obtained by CURRENT-REACTOR function."
       (format stream "Running: ~:[No~;Yes~]"
               (%reactor-running object))
       (pprint-newline :mandatory stream)
-      (format stream "Thread: ~s" (%reactor-thread object))
+      (format stream "Thread ID: ~s" (%reactor-thread-id object))
       (pprint-newline :mandatory stream)))
   object)
 
@@ -96,10 +97,10 @@ One of(from highest to lowest): :NORMAL, :REACTIONS, :RENDER, :INPUT or :IDLE."
 "Returns a reactor object for current thread.
 Unless thread's reactor already exists, it is created."
   (if *current-reactor*
-    (let ((thread (current-thread)))
-      (unless (thread= thread (%reactor-thread *current-reactor*))
+    (let ((thread-id (current-thread-id)))
+      (unless (= thread-id (%reactor-thread-id *current-reactor*))
         ;; reactor is out of date (e.g. lisp image has been restarted)
-        (setf (%reactor-thread *current-reactor*) (current-thread)
+        (setf (%reactor-thread-id *current-reactor*) thread-id
               (%reactor-lock *current-reactor*) (bt:make-lock)))
       *current-reactor*)
     (setf *current-reactor* (%make-reactor))))
@@ -108,18 +109,33 @@ Unless thread's reactor already exists, it is created."
   (declare (ignore args))
   (values))
 
+(defstruct (reactor-structure
+             (:constructor nil)
+             (:conc-name %reactor-structure-)
+             (:predicate %reactor-structure-p))
+  (reactor (current-reactor) :type reactor))
+
+(defun reactor-structure-p (object)
+"Returns T if an object is a REACTOR-STRUCTURE and NIL otherwise."  
+  (%reactor-structure-p object))
+
+(defun reactor-structure-reactor (reactor-structure)
+"Returns a reactor that created this REACTOR-STRUCTURE."
+  (declare (type reactor-structure reactor-structure))
+  (%reactor-structure-reactor reactor-structure))
+
 (deftype operation-status ()
 "Each reactor operation has a status.
 One of: :PENDING, :EXECUTING, :COMPLETED or :CANCELLED."
   '(member :pending :executing :completed :cancelled))
 
 (defstruct (reactor-operation
+             (:include reactor-structure)
              (:conc-name %operation-)
              (:predicate %operation-p)
              (:constructor %make-operation))
 "Instances of this structure class represent
 pieces of code that must be executed by the reactor."
-  (reactor (current-reactor) :type reactor)
   (values '() :type list)
   (function #'no-values :type function)
   (args '() :type list)
@@ -203,5 +219,67 @@ Unless function has completed its execution, returns zero values."
 "Returns current status of an operation."
   (declare (type reactor-operation operation))
   (%operation-status operation))
+
+(defstruct (reactor-timer
+             (:include reactor-structure)
+             (:conc-name %timer-)
+             (:constructor %make-timer)
+             (:predicate %timer-p))
+"Represents a timer associated with certain reactor."
+  (id 0 :type timer-id)
+  (running nil)
+  (interval 0 :type unsigned-byte)
+  (function #'no-values :type function)
+  (args '() :type list)
+  (priority :normal :type reactor-priority))
+
+(defmethod print-object ((object reactor-timer) stream)
+  (print-unreadable-object (object stream :type t :identity t)
+    (pprint-logical-block (stream nil)
+      (format stream "Reactor: ~s" (%timer-reactor object))
+      (pprint-newline :mandatory stream)
+      (format stream "Running: ~:[No~;Yes~]" (%timer-running object))
+      (pprint-newline :mandatory stream)
+      (format stream "Priority: ~:(~a~)" (%timer-priority object))
+      (pprint-newline :mandatory stream)
+      (format stream "Interval: ~Dms" (%timer-interval object))
+      (pprint-newline :mandatory stream)))
+  object)
+
+(defun reactor-timer-p (object)
+"Returns T if an object is an instance of REACTOR-TIMER and NIL otherwise."
+  (%timer-p object))
+
+(defun timer-reactor (timer)
+"Returns a REACTOR associated with the timer."
+  (declare (type reactor-timer timer))
+  (%timer-reactor timer))
+
+(defun timer-interval (timer)
+"Returns an interval at which timer is elapsed.
+Interval is measured in milliseconds."
+  (declare (type reactor-timer timer))
+  (%timer-interval timer))
+
+(defun timer-function (timer)
+"Returns a function associated with the timer."
+  (declare (type reactor-timer timer))
+  (%timer-function timer))
+
+(defun timer-args (timer)
+"Returns a list of arguments associated with timer's function."
+  (declare (type reactor-timer timer))
+  (%timer-args timer))
+
+(defun timer-priority (timer)
+"Returns timer's priority.
+One of(from highest to lowest): :NORMAL, :REACTIONS, :RENDER, :INPUT or :IDLE."
+  (declare (type reactor-timer timer))
+  (%timer-priority timer))
+
+(defun timer-running-p (timer)
+"Returns T if timer is already started and NIL otherwise."
+  (declare (type reactor-timer timer))
+  (%timer-running timer))
 
 (ensure-default-thread-bindings)

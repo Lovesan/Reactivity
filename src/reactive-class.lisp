@@ -36,6 +36,11 @@
                                 (superclass reactive-class))
   t)
 
+(defmethod ensure-class-using-class :after
+    ((class reactive-class) name &key &allow-other-keys)
+  (declare (ignore name))
+  (finalize-inheritance class))
+
 (defclass reactive-slot-definition (standard-slot-definition)
   ((%reaction
      :initform t

@@ -126,14 +126,22 @@ In case when operation has been cancelled, returns zero values."
   (case (%operation-status operation)
     (:completed (values-list (%operation-values operation)))
     (:cancelled (values))
-    (T (progn (let ((reactor (%operation-reactor operation))
-                    (current-reactor (current-reactor)))
+    (T (progn (let ((reactor (%operation-reactor operation)))
                 (with-reactor-lock (reactor)
-                  (push (current-thread) (%operation-observers operation)))
+                  (push (current-thread-id) (%operation-observers operation)))
                 (with-thread-loop
-                    (loop (thread-wait-notification)
-                      (let ((operation (reactor-dequeue current-reactor)))
-                        (when operation (operation-execute operation)))
+                    (loop
+                      (let ((result (thread-wait-notification)))
+                        (if (null result)
+                          (let ((operation (reactor-dequeue reactor)))
+                            (when operation (operation-execute operation)))
+                          (let ((timer (gethash result (%reactor-timers reactor))))
+                            (when timer
+                              (reactor-invoke reactor
+                                              (%timer-function timer)
+                                              (%timer-args timer)
+                                              :priority (%timer-priority timer)
+                                              :wait nil)))))
                       (case (%operation-status operation)
                         (:completed (return (values-list (%operation-values operation))))
                         (:cancelled (return (values)))))))))))
@@ -151,7 +159,7 @@ REACTOR-OPERATION.
 :COMPLETION callback will be called upon operation's completion.
 :CANCELLATION routine will be called upon operation's cancellation.
 :PRIORITY parameter represents operation's priority level,
-:PRIORITY could be one of: :NORMAL, :REACTIONS, :RENDER, :INPUT or :IDLE."
+:PRIORITY could be one of: :NORMAL(default), :REACTIONS, :RENDER, :INPUT or :IDLE."
   (declare (type reactor reactor)
            (type reactor-priority priority)
            (type function function completion cancellation)
@@ -164,7 +172,7 @@ REACTOR-OPERATION.
                      :completion completion
                      :cancellation cancellation)))
     (reactor-enqueue reactor operation)
-    (thread-notify (%reactor-thread reactor))
+    (thread-notify (%reactor-thread-id reactor))
     (if wait
       (operation-wait operation)
       operation)))
@@ -196,6 +204,140 @@ current thread's reactor."
         (declare (type reactor reactor))
         (setf (%reactor-running reactor) t)
         (loop :while (%reactor-running reactor) :do
-          (thread-wait-notification)
-          (let ((operation (reactor-dequeue reactor)))
-            (when operation (operation-execute operation)))))))
+          (let ((result (thread-wait-notification)))
+            (if (null result)
+              (let ((operation (reactor-dequeue reactor)))
+                (when operation (operation-execute operation)))
+              (let ((timer (gethash result (%reactor-timers reactor))))
+                (when timer
+                  (reactor-invoke reactor
+                                  (%timer-function timer)
+                                  (%timer-args timer)
+                                  :priority (%timer-priority timer)
+                                  :wait nil)))))))))
+
+(defun %timer-start (timer)
+  (declare (type reactor-timer timer))
+  (let* ((reactor (%timer-reactor timer))
+         (timers (%reactor-timers reactor))
+         (id (create-timer (%timer-interval timer))))
+    (setf (%timer-id timer) id
+          (gethash id timers) timer))
+  (values))
+
+(defun timer-start (timer)
+"Starts the timer."
+  (declare (type reactor-timer timer))
+  (let ((reactor (%timer-reactor timer)))
+    (with-reactor-lock (reactor)
+      (when (%timer-running timer)
+        (return-from timer-start nil))
+      (setf (%timer-running timer) t))
+    (reactor-invoke reactor
+                    #'%timer-start
+                    (list timer)
+                    :wait nil)
+    t))
+
+(defun %timer-stop (timer)
+  (declare (type reactor-timer timer))
+  (let* ((reactor (%timer-reactor timer))
+         (timers (%reactor-timers reactor))
+         (id (%timer-id timer)))
+    (remhash id timers)
+    (timer-destroy id)
+    (setf (%timer-id timer) 0))
+  (values))
+
+(defun timer-stop (timer)
+"Stops the timer."
+  (declare (type reactor-timer timer))
+  (let ((reactor (%timer-reactor timer)))
+    (with-reactor-lock (reactor)
+      (unless (%timer-running timer)
+        (return-from timer-stop nil))
+      (setf (%timer-running timer) nil))
+    (reactor-invoke reactor
+                    #'%timer-stop
+                    (list timer)
+                    :wait nil)
+    t))
+
+(defun (setf timer-priority) (new-priority timer)
+"Sets new priority level for the timer.
+One of(from highest to lowest): :NORMAL, :REACTIONS, :RENDER, :INPUT or :IDLE."
+  (declare (type reactor-priority new-priority)
+           (type reactor-timer timer))
+  (with-reactor-lock ((%timer-reactor timer))
+    (setf (%timer-priority timer) new-priority)))
+
+(defun (setf timer-function) (new-function timer)
+"Sets new function for the timer.
+This function is applied to timer's args, each time timer's interval elapses."
+  (declare (type function new-function)
+           (type reactor-timer timer))
+  (with-reactor-lock ((%timer-reactor timer))
+    (setf (%timer-function timer) new-function)))
+
+(defun (setf timer-args) (new-args timer)
+"Sets new argument list for timer's function."
+  (declare (type list new-args)
+           (type reactor-timer timer))
+  (with-reactor-lock ((%timer-reactor timer))
+    (setf (%timer-args timer) new-args)))
+
+(defun %set-timer-interval (timer interval)
+  (declare (type reactor-timer timer)
+           (type unsigned-byte interval))
+  (let* ((id (%timer-id timer))
+         (present (gethash id (%reactor-timers
+                                (%timer-reactor timer)))))
+    (when present
+      (timer-change-interval id interval)))
+  (values))
+
+(defun (setf timer-interval) (new-interval timer)
+"Sets new interval for the timer.
+Interval is measured in milliseconds."
+  (declare (type unsigned-byte new-interval)
+           (type reactor-timer timer))
+  (block nil
+    (with-reactor-lock ((%timer-reactor timer))
+      (setf (%timer-interval timer) new-interval)
+      (unless (%timer-running timer)
+        (return new-interval)))
+    (reactor-invoke (%timer-reactor timer)
+                    #'%set-timer-interval
+                    (list timer new-interval)
+                    :wait nil)
+    new-interval))
+
+(defun make-timer (&key (reactor (current-reactor))
+                        (interval 0)
+                        (function #'no-values)
+                        (args '())
+                        (priority :normal)
+                        (start nil))
+"Constructs and returns a new instance of REACTOR-TIMER.
+:REACTOR is a REACTOR that should be associated with this timer.
+:INTERVAL - a non-negative integer. Interval is measured in milliseconds.
+:FUNCTION - a function, that should be called each time timer elapses.
+:ARGS - a list of arguments for the :FUNCTION.
+:PRIORITY parameter represents timer's priority level,
+One of: :NORMAL(default), :REACTIONS, :RENDER, :INPUT or :IDLE.
+Unless :START equals to NIL, timer is started immediately."
+  (declare (type unsigned-byte interval)
+           (type reactor reactor)
+           (type function function)
+           (type list args)
+           (type reactor-priority priority))
+  (let ((timer (%make-timer
+                 :reactor reactor
+                 :interval interval
+                 :function function
+                 :args args
+                 :priority priority)))
+    (declare (type reactor-timer timer))
+    (when start
+      (timer-start timer))
+    timer))

@@ -33,6 +33,14 @@
     
     #:ensure-default-thread-bindings
     
+    ;;conditions
+    #:reactivity-error
+    #:reactor-error
+    #:reactor-error-reactor
+    #:reaction-error
+    #:reaction-error-reaction
+    #:reaction-incompatible-reactor
+    
     ;;reactor stuff
     #:reactor
     #:reactor-p
@@ -42,6 +50,9 @@
     #:reactor-run
     #:reactor-invoke
     #:reactor-shutdown
+    #:reactor-structure
+    #:reactor-structure-p
+    #:reactor-structure-reactor
     
     ;;reactor operation stuff
     #:reactor-operation
@@ -57,13 +68,18 @@
     #:operation-cancel
     #:operation-wait
     
-    ;;conditions
-    #:reactivity-error
-    #:reactor-error
-    #:reactor-error-reactor
-    #:reaction-error
-    #:reaction-error-reaction
-    #:reaction-incompatible-reactor
+    ;;reactor timer stuff
+    #:reactor-timer
+    #:reactor-timer-p
+    #:make-timer
+    #:timer-start
+    #:timer-stop
+    #:timer-running-p    
+    #:timer-reactor
+    #:timer-interval
+    #:timer-function
+    #:timer-args
+    #:timer-priority
     
     ;;reaction stuff
     #:reaction

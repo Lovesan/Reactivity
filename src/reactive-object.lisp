@@ -33,23 +33,13 @@
 
 (finalize-inheritance (find-class 'reactive-object))
 
-(defmethod shared-initialize :around
-  ((object reactive-class) slot-names &rest initargs
-   &key direct-superclasses &allow-other-keys)
-  (declare (ignore slot-names))
-  (remf initargs :direct-superclasses)
-  (let ((superclasses (if (find-if (lambda (x)
-                                     (when (typep x 'class)
-                                       (setf x (class-name x)))
-                                     (subtypep x 'reactive-object))
-                                   direct-superclasses)
-                        direct-superclasses
-                        (append direct-superclasses
-                                (list (find-class 'reactive-object))))))
-    (multiple-value-prog1
-     (apply #'call-next-method object slot-names :direct-superclasses superclasses
-            initargs)
-     (finalize-inheritance object))))
+(defmethod compute-class-precedence-list ((class reactive-class))
+  (let ((cpl (call-next-method)))
+    (if (find-if (lambda (c)
+                   (subtypep (class-name c) 'reactive-object))
+                 cpl)
+      cpl
+      (append cpl (list (find-class 'reactive-object))))))
 
 (defvar *slot-direct-access* nil)
 
@@ -62,6 +52,14 @@
       value
       (reaction-value (the reaction value)))))
 
+(defun %reactive-object-reactor (object)
+  (declare (type reactive-object object))
+  (let ((*slot-direct-access* t))
+    (if (slot-boundp object '%reactor)
+      (reactive-object-reactor object)
+      (setf (slot-value object '%reactor)
+            (current-reactor)))))
+
 (defmethod (setf slot-value-using-class)
     (new-value (class reactive-class) (object reactive-object)
                (slotd reactive-slot-definition))
@@ -69,13 +67,10 @@
           (not (reactive-slot-definition-reaction slotd)))
     (call-next-method)
     (if (%reaction-p new-value)
-      (let ((reactor (let ((*slot-direct-access* t))
-                       (if (slot-boundp object '%reactor)
-                         (reactive-object-reactor object)
-                         (setf (slot-value object '%reactor)
-                               (current-reactor))))))
+      (let ((reactor (%reactive-object-reactor object)))
         (if (eq reactor (%reaction-reactor new-value))
-          (call-next-method)
+          (with-reactor-lock (reactor)
+            (call-next-method))
           (error 'reaction-incompatible-reactor
                  :reaction new-value
                  :reactor reactor)))

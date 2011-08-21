@@ -30,12 +30,13 @@
 ;;  by the means of reactors.
 
 (defstruct (reaction
+             (:include reactor-structure)
              (:conc-name %reaction-)
              (:predicate %reaction-p)
              (:constructor %make-reaction (function)))
 "Instances of this structure class represent reactions
 bound to slots of reactive objects."
-  (reactor (current-reactor) :type reactor)
+  (invalidated nil)
   (value nil :type t)
   (function #'no-values :type function)
   (dependent (cons nil nil) :type (cons list list)))
@@ -84,13 +85,16 @@ bound to slots of reactive objects."
 
 (defun reaction-recompute (reaction)
   (declare (type reaction reaction))
-  (let* ((*current-reaction* reaction)
-         (values (multiple-value-list
-                   (funcall (%reaction-function reaction)))))
-    (if (null values)
-      (%reaction-value reaction)
-      (prog1 (setf (%reaction-value reaction) (car values))
-       (reaction-update-dependent reaction)))))
+  (unless (%reaction-invalidated reaction)    
+    (let* ((*current-reaction* reaction)
+           (values (multiple-value-list
+                     (funcall (%reaction-function reaction)))))
+      (unless (null values)
+        (setf (%reaction-value reaction) (car values)
+              (%reaction-invalidated reaction) t)
+        (reaction-update-dependent reaction)
+        (setf (%reaction-invalidated reaction) nil))))
+  (values))
 
 (defun get-reaction-value (reaction current)
   (declare (type reaction reaction)
@@ -114,8 +118,10 @@ bound to slots of reactive objects."
 
 (defun set-reaction-value (reaction new-value)
   (declare (type reaction reaction))
-  (setf (%reaction-value reaction) new-value)
+  (setf (%reaction-value reaction) new-value
+        (%reaction-invalidated reaction) t)
   (reaction-update-dependent reaction)
+  (setf (%reaction-invalidated reaction) nil)
   new-value)
 
 (defun (setf reaction-value) (new-value reaction)
