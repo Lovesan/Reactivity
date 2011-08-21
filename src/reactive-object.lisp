@@ -33,13 +33,30 @@
 
 (finalize-inheritance (find-class 'reactive-object))
 
-(defmethod compute-class-precedence-list ((class reactive-class))
-  (let ((cpl (call-next-method)))
-    (if (find-if (lambda (c)
-                   (subtypep (class-name c) 'reactive-object))
-                 cpl)
-      cpl
-      (append cpl (list (find-class 'reactive-object))))))
+(defmethod shared-initialize :around
+  ((class reactive-class) slot-names
+   &rest initargs &key direct-superclasses &allow-other-keys)
+  (declare (ignore slot-names))
+  (remf initargs :direct-superclasses)
+  (let* ((found nil)
+         (direct-superclasses (mapcar (lambda (c)
+                                        (let* ((c (if (symbolp c)
+                                                    (find-class c)
+                                                    c))
+                                               (n (class-name c)))
+                                          (when (or (eq n 'reactive-object)
+                                                    (subtypep n 'reactive-object))
+                                            (setf found t))
+                                          c))
+                               direct-superclasses)))
+    (apply #'call-next-method
+           class
+           slot-names
+           :direct-superclasses (if found
+                                  direct-superclasses
+                                  (nconc direct-superclasses
+                                         (list (find-class 'reactive-object))))
+           initargs)))
 
 (defvar *slot-direct-access* nil)
 
